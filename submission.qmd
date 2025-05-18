@@ -1,0 +1,312 @@
+---
+title: Network Analytics FCP 
+author: Marius Kiefer
+date: last-modified
+abstract-title: Abstract
+abstract: Final Course Project in SMM638 Network Analytics, Student - Marius Kiefer, 2024
+warning: false
+format: 
+  html:
+    code-fold: false
+    code-tools: true
+    toc: true
+    toc-title: Table of Contents 
+    toc-depth: 2
+    toc-location: right
+    number-sections: true
+    citations-hover: false
+    footnotes-hover: false
+    crossrefs-hover: false
+    theme: united 
+    fig-width: 9
+    fig-height: 6
+---
+
+
+```{python}
+# load modules
+import pandas as pd
+import numpy as np
+import json
+import networkx as nx
+from networkx.algorithms.community import louvain_communities
+import matplotlib.pyplot as plt
+```
+
+```{python}
+# load data
+fr = pd.read_csv('data/HR_edges.csv')
+```
+
+```{python}
+with open('data/HR_genres.json', 'r') as f:
+    pr_json = json.load(f)
+```
+
+```{python}
+all_genres = set(genre for genres in pr_json.values() for genre in genres)
+```
+
+
+```{python}
+user_genre_matrix = pd.DataFrame(0, index=pr_json.keys(), columns=sorted(all_genres))
+```
+
+
+```{python}
+for user, genres in pr_json.items():
+    user_genre_matrix.loc[user, genres] = 1
+```
+
+
+```{python}
+user_user_shared_likes_matrix = user_genre_matrix.dot(user_genre_matrix.T)
+```
+
+
+```{python}
+genre_genre_network_matrix = user_genre_matrix.T.dot(user_genre_matrix)
+```
+
+
+
+```{python}
+genre_pairs_dict = {}
+
+# Loop through the upper triangle of the matrix
+for i, genre1 in enumerate(genre_genre_network_matrix.columns):
+    for j, genre2 in enumerate(genre_genre_network_matrix.columns):
+        if i < j:  # Ensure only upper triangle is processed
+            mutual_likers = genre_genre_network_matrix.loc[genre1, genre2]
+            if mutual_likers > 0:  # Include only pairs with mutual likers
+                genre_pairs_dict[(genre1, genre2)] = mutual_likers
+```
+
+
+```{python}
+G_weighted = nx.Graph()
+
+for (genre1, genre2), weight in genre_pairs_dict.items():
+    G_weighted.add_edge(genre1, genre2, weight=weight)
+```
+
+
+```{python}
+#| output: false
+
+resolutions = [0.8, 0.9, 1.1, 1.2, 1.3]
+num_communities = []
+modularities = []
+
+for res in resolutions:
+    communities_2 = louvain_communities(G_weighted, weight='weight', resolution=res, seed=200)
+    num_communities.append(len(communities_2))
+    modularities.append(nx.algorithms.community.modularity(G_weighted, communities_2, weight='weight'))
+
+plt.figure(figsize=(10, 5))
+plt.subplot(1, 2, 1)
+plt.plot(resolutions, num_communities, marker='o')
+plt.xlabel('Resolution')
+plt.ylabel('Number of Communities')
+plt.title('Number of Communities vs. Resolution')
+
+plt.subplot(1, 2, 2)
+plt.plot(resolutions, modularities, marker='o')
+plt.xlabel('Resolution')
+plt.ylabel('Modularity')
+plt.title('Modularity vs. Resolution')
+
+plt.tight_layout()
+plt.show()
+```
+
+
+```{python}
+fit = nx.community.louvain_communities(G_weighted, weight="weight", seed = 200, resolution = 1.1)
+# retrieve the communities
+communities = tuple(sorted(c) for c in fit)    
+```
+
+
+```{python}
+# creating a custom layout to position clusters closer together
+
+def community_square_layout(graph, partition, scale=4, padding=2.5):
+    pos = {}
+    communities = {}
+    
+    # nodes to communities
+    for node, community in partition.items():
+        if community not in communities:
+            communities[community] = []
+        communities[community].append(node)
+    
+    # defining quadrants for up to four communities
+    quadrants = {
+        0: (-scale, scale),    
+        1: (scale, scale),     
+        2: (-scale, -scale),   
+        3: (scale, -scale)     
+    }
+
+    # generating positions for each community
+    for i, (community, nodes) in enumerate(communities.items()):
+        subgraph = graph.subgraph(nodes)
+        sub_pos = nx.spring_layout(subgraph, seed=42, k=10)  # increased `k` for more spacing, and set a seed for constant results
+        cx, cy = quadrants.get(i, (0, 0))  
+        
+        for node, (x, y) in sub_pos.items():
+            pos[node] = (cx + x * padding, cy + y * padding)
+    
+    return pos
+
+
+community_map = {node: i for i, community in enumerate(communities) for node in community}
+
+# setting pos for the graph with the result of the positioning algorithm
+pos = community_square_layout(G_weighted, community_map, scale=5, padding=4)
+```
+
+```{python}
+#| warning: false
+
+
+num_communities = len(communities)
+cmap = plt.cm.get_cmap('tab10', num_communities)  # 'tab10' has 10 distinct colors
+community_colors = {i: cmap(i) for i in range(num_communities)}
+
+# creating a dictionary to map nodes to their community colors
+node_colors = {}
+for i, community in enumerate(communities):
+    for node in community:
+        node_colors[node] = community_colors[i]
+
+# generating a list of colors for all nodes in the graph
+colors = [node_colors[node] for node in G_weighted.nodes]
+
+# visualize the network
+nx.draw(
+    G_weighted,
+    pos,
+    with_labels=True,
+    node_color=colors,
+    node_size=300,
+    edge_color=[G_weighted[u][v]["weight"] for u, v in G_weighted.edges],
+    edge_cmap=plt.cm.Greens,
+    edge_vmin=0,
+    edge_vmax=10,
+)
+```
+
+
+```{python}
+# similarity examples
+# top 10 overall
+top_10_pairs = sorted(genre_pairs_dict.items(), key=lambda x: x[1], reverse=True)[:10]
+
+# top 10 pairs that include 'blues'
+blues_pairs = {pair: likes for pair, likes in genre_pairs_dict.items() if 'Blues' in pair[0] or 'Blues' in pair[1]}
+top_10_blues_pairs = sorted(blues_pairs.items(), key=lambda x: x[1], reverse=True)[:10]
+
+# Debugging part als well as output
+print("Top 10 pairs with the most shared likes:")
+for pair, likes in top_10_pairs:
+    print(f"Pair: {pair}, Likes: {likes}")
+
+print("\nTop 10 pairs that include 'blues':")
+for pair, likes in top_10_blues_pairs:
+    print(f"Pair: {pair}, Likes: {likes}")
+```
+
+
+
+```{python}
+# sorting the genre_pairs_dict by the number of likes in descending order
+sorted_pairs = sorted(genre_pairs_dict.items(), key=lambda x: x[1], reverse=True)
+```
+
+
+```{python}
+# The goal is to show that the proportion of friends is not necessarily big for pairs with many mutual likers compared to less mutual likers
+
+friendships_df = fr
+
+# setting types
+friendships_df['node_1'] = friendships_df['node_1'].astype(str)
+friendships_df['node_2'] = friendships_df['node_2'].astype(str)
+
+
+# function to check for issues in the calculations
+def calculate_friend_proportion_with_debug(genre_pair, user_genre_matrix, friendships_df):
+    genre_1, genre_2 = genre_pair
+    
+    # identifying users who like both genres
+    mutual_likers = user_genre_matrix[
+        (user_genre_matrix[genre_1] == 1) & (user_genre_matrix[genre_2] == 1)
+    ].index
+    
+    # Debug
+    print(f"Genre Pair: {genre_pair}")
+    print(f"Number of mutual likers: {len(mutual_likers)}")
+    
+    # no mutual likers case
+    if len(mutual_likers) == 0:
+        print("No mutual likers found.")
+        return {"genre_pair": genre_pair, "friends_count": 0, "total_pairs": 0, "proportion_friends": 0.0}
+    
+    # converting mutual likers to a set for faster lookup
+    mutual_likers_set = set(mutual_likers)
+    mutual_likers_set = set(map(str, mutual_likers_set))
+    
+    # filtering friendships for users in the mutual likers set
+    filtered_friendships = friendships_df[
+        (friendships_df['node_1'].isin(mutual_likers_set)) & 
+        (friendships_df['node_2'].isin(mutual_likers_set))
+    ]
+    
+    # Debug
+    print(f"Number of friendships among mutual likers: {len(filtered_friendships)}")
+    
+    # no friendships found case
+    if len(filtered_friendships) == 0:
+        print("No friendships found among mutual likers.")
+        return {"genre_pair": genre_pair, "friends_count": 0, "total_pairs": 0, "proportion_friends": 0.0}
+    
+    # calculating total possible pairs
+    num_likers = len(mutual_likers)
+    total_pairs = num_likers * (num_likers - 1) / 2  
+    
+    # Debug
+    print(f"Total possible pairs: {total_pairs}")
+    
+    # calculating proportion of friends
+    friends_count = len(filtered_friendships)
+    proportion_friends = friends_count / total_pairs if total_pairs > 0 else 0.0
+    
+    # Debug
+    print(f"Proportion of friends: {proportion_friends}")
+    
+    # returning the result as a dictionary
+    return {
+        "genre_pair": genre_pair,
+        "friends_count": friends_count,
+        "total_pairs": total_pairs,
+        "proportion_friends": proportion_friends
+    }
+
+# pair of genres that are getting compared
+genre_pairs_to_check = [sorted_pairs[0][0], sorted_pairs[1100][0]]
+
+results = []
+
+# running the analysis for the selected genre pairs
+for genre_pair in genre_pairs_to_check:
+    result = calculate_friend_proportion_with_debug(genre_pair, user_genre_matrix, friendships_df)
+    results.append(result)
+
+# converting results to a DataFrame for better readability
+results_df = pd.DataFrame(results)
+print("\nFinal Results:")
+print(results_df)
+```
+
