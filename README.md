@@ -1,2 +1,2 @@
 # University Coursework Network Amalytics
-Analyting Deezer User behaviour 
+Analyzing Deezer user behaviour and relationships
